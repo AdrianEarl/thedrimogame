@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+  />
+
+  <meta name="theme-color" content="#111111" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <title>Drimo | Endless Runner</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html,
+    body,
+    #app {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #111111;
+
+      /* No page scrolling, pinch zoom or pull-to-refresh while playing */
+      touch-action: none;
+      overscroll-behavior: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    body {
+      height: 100vh;
+      height: 100dvh;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    /* Phones held upright: ask the player to turn the phone */
+    #rotate {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      background: #111111;
+      color: #ffffff;
+      font-family: Arial, sans-serif;
+      font-weight: bold;
+      text-align: center;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 18px;
+      padding: 24px;
+    }
+
+    #rotate .icon {
+      font-size: 72px;
+      animation: turn 1.6s ease-in-out infinite;
+    }
+
+    #rotate .text {
+      font-size: 24px;
+      color: #ffd447;
+    }
+
+    @keyframes turn {
+      0%, 20% { transform: rotate(0deg); }
+      60%, 100% { transform: rotate(-90deg); }
+    }
+
+    @media (orientation: portrait) and (pointer: coarse) {
+      #rotate {
+        display: flex;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="app"></div>
+
+  <div id="rotate">
+    <div class="icon">&#128241;</div>
+    <div class="text">TURN YOUR PHONE SIDEWAYS TO PLAY</div>
+  </div>
+
+  <script
+    type="module"
+    src="/src/main.js">
+  </script>
+
+</body>
+</html>
