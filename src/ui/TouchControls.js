@@ -7,9 +7,12 @@ import Phaser from "phaser";
 //   UP / DOWN buttons : bottom-left, hold to move between lanes
 //   JUMP              : tap anywhere on the right half of the screen
 //   PAUSE             : small button at the top
-//   FULLSCREEN        : small button next to pause (Android / desktop
-//                       only: iPhone Safari does not allow fullscreen,
-//                       use "Add to Home Screen" there instead)
+//   FULLSCREEN        : small button next to pause. Uses the browser's
+//                       own fullscreen API (not Phaser's), so it works
+//                       in Brave / Chrome on Android. Hidden when the
+//                       game is already running as an installed app, and
+//                       on iPhone Safari (no fullscreen there: use
+//                       "Add to Home Screen" instead).
 //   Menus             : tap anywhere
 //
 // The buttons only exist on touch devices. To preview them on a
@@ -28,6 +31,11 @@ const PAUSE_BUTTON = { x: 700, y: 70, radius: 42, hit: 66 };
 const FULLSCREEN_BUTTON = { x: 830, y: 70, radius: 42, hit: 60 };
 const FULLSCREEN_DEPTH = 350;
 
+// Message shown when the browser refuses fullscreen
+const FULLSCREEN_HINT =
+  "Fullscreen blocked.\nBrowser menu > Add to Home screen\nto play without the address bar.";
+const HINT_SECONDS = 3.5;
+
 // Pause menu: tapping inside this rectangle restarts the run,
 // tapping anywhere else resumes (see MenuScreens.js)
 const RESTART_ZONE = new Phaser.Geom.Rectangle(700, 600, 520, 100);
@@ -38,6 +46,65 @@ const PRESSED_ALPHA = 0.85;
 
 // The small top buttons are easy to miss, so they are brighter
 const TOP_BUTTON_ALPHA = 0.75;
+
+// =================================
+// BROWSER FULLSCREEN HELPERS
+// =================================
+
+// True when the game already runs as an installed app / fullscreen
+const isStandalone = () => {
+  try {
+    return (
+      window.matchMedia("(display-mode: fullscreen)").matches ||
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true
+    );
+  } catch (error) {
+    return false;
+  }
+};
+
+const fullscreenSupported = () => {
+  const el = document.documentElement;
+
+  return !!(el.requestFullscreen || el.webkitRequestFullscreen);
+};
+
+const fullscreenActive = () =>
+  !!(document.fullscreenElement || document.webkitFullscreenElement);
+
+// Resolves to true if fullscreen started, false if it was refused
+const enterFullscreen = () => {
+  const el = document.documentElement;
+
+  try {
+    const result = el.requestFullscreen
+      ? el.requestFullscreen({ navigationUI: "hide" })
+      : el.webkitRequestFullscreen();
+
+    if (result && typeof result.then === "function") {
+      return result.then(() => true).catch(() => false);
+    }
+
+    return Promise.resolve(true);
+  } catch (error) {
+    return Promise.resolve(false);
+  }
+};
+
+const exitFullscreen = () => {
+  try {
+    if (document.exitFullscreen) {
+      const result = document.exitFullscreen();
+
+      if (result && result.catch) result.catch(() => {});
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  } catch (error) {
+    // Ignore
+  }
+};
 
 export default class TouchControls {
   constructor(scene) {
@@ -61,6 +128,10 @@ export default class TouchControls {
 
     this.parts = [];
     this.fullscreenButton = null;
+    this.hintText = null;
+
+    // Bound once so the same function can be removed on cleanup
+    this.onFullscreenChange = this.onFullscreenChange.bind(this);
 
     if (!this.enabled) return;
 
@@ -76,8 +147,14 @@ export default class TouchControls {
     scene.input.on("pointerup", this.handleUp, this);
 
     // Fullscreen on Android: lock to landscape once it starts
-    scene.scale.on("enterfullscreen", this.lockLandscape, this);
-    scene.scale.on("leavefullscreen", this.unlockOrientation, this);
+    document.addEventListener(
+      "fullscreenchange",
+      this.onFullscreenChange
+    );
+    document.addEventListener(
+      "webkitfullscreenchange",
+      this.onFullscreenChange
+    );
 
     scene.events.once("shutdown", () => this.destroy());
 
@@ -152,9 +229,10 @@ export default class TouchControls {
 
     this.pauseButton.setAlpha(TOP_BUTTON_ALPHA);
 
-    // FULLSCREEN (four corner brackets). Only where the browser
-    // allows it (not on iPhone Safari).
-    if (scene.scale.fullscreen && scene.scale.fullscreen.available) {
+    // FULLSCREEN (four corner brackets). Built whenever the browser
+    // supports the fullscreen API, unless the game already runs as an
+    // installed app. (No longer depends on Phaser's own check.)
+    if (fullscreenSupported() && !isStandalone()) {
       const corners = scene.add.graphics();
 
       corners.lineStyle(7, 0xffffff, 1);
@@ -178,6 +256,21 @@ export default class TouchControls {
       this.fullscreenButton.setDepth(FULLSCREEN_DEPTH);
       this.fullscreenButton.setAlpha(TOP_BUTTON_ALPHA);
     }
+
+    // Small message shown if the browser refuses fullscreen
+    this.hintText = scene.add
+      .text(960, 150, FULLSCREEN_HINT, {
+        fontFamily: "Arial",
+        fontSize: "34px",
+        color: "#ffffff",
+        fontStyle: "bold",
+        align: "center",
+        stroke: "#000000",
+        strokeThickness: 7
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(FULLSCREEN_DEPTH + 10)
+      .setVisible(false);
   }
 
   // =================================
@@ -193,13 +286,42 @@ export default class TouchControls {
     );
   }
 
+  // Must run inside a touch event (the browser requires it)
   toggleFullscreen() {
-    const scale = this.scene.scale;
+    if (fullscreenActive()) {
+      exitFullscreen();
+      return;
+    }
 
-    if (scale.isFullscreen) {
-      scale.stopFullscreen();
+    enterFullscreen().then((started) => {
+      if (!started) this.showHint();
+    });
+  }
+
+  showHint() {
+    if (!this.hintText || !this.scene || !this.scene.tweens) return;
+
+    this.scene.tweens.killTweensOf(this.hintText);
+
+    this.hintText.setAlpha(1);
+    this.hintText.setVisible(true);
+
+    this.scene.tweens.add({
+      targets: this.hintText,
+      alpha: 0,
+      delay: HINT_SECONDS * 1000,
+      duration: 500,
+      onComplete: () => {
+        if (this.hintText) this.hintText.setVisible(false);
+      }
+    });
+  }
+
+  onFullscreenChange() {
+    if (fullscreenActive()) {
+      this.lockLandscape();
     } else {
-      scale.startFullscreen();
+      this.unlockOrientation();
     }
   }
 
@@ -369,10 +491,14 @@ export default class TouchControls {
       this.scene.input.off("pointerup", this.handleUp, this);
     }
 
-    if (this.scene && this.scene.scale) {
-      this.scene.scale.off("enterfullscreen", this.lockLandscape, this);
-      this.scene.scale.off("leavefullscreen", this.unlockOrientation, this);
-    }
+    document.removeEventListener(
+      "fullscreenchange",
+      this.onFullscreenChange
+    );
+    document.removeEventListener(
+      "webkitfullscreenchange",
+      this.onFullscreenChange
+    );
 
     this.parts = [];
   }
