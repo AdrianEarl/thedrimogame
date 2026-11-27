@@ -7,6 +7,9 @@ import Phaser from "phaser";
 //   UP / DOWN buttons : bottom-left, hold to move between lanes
 //   JUMP              : tap anywhere on the right half of the screen
 //   PAUSE             : small button at the top
+//   FULLSCREEN        : small button next to pause (Android / desktop
+//                       only: iPhone Safari does not allow fullscreen,
+//                       use "Add to Home Screen" there instead)
 //   Menus             : tap anywhere
 //
 // The buttons only exist on touch devices. To preview them on a
@@ -21,6 +24,10 @@ const JUMP_ZONE_X = 960;
 
 const PAUSE_BUTTON = { x: 700, y: 70, radius: 42, hit: 66 };
 
+// Always visible (title, pause and game over screens too)
+const FULLSCREEN_BUTTON = { x: 830, y: 70, radius: 42, hit: 60 };
+const FULLSCREEN_DEPTH = 350;
+
 // Pause menu: tapping inside this rectangle restarts the run,
 // tapping anywhere else resumes (see MenuScreens.js)
 const RESTART_ZONE = new Phaser.Geom.Rectangle(700, 600, 520, 100);
@@ -28,6 +35,9 @@ const RESTART_ZONE = new Phaser.Geom.Rectangle(700, 600, 520, 100);
 const DEPTH = 150;
 const IDLE_ALPHA = 0.35;
 const PRESSED_ALPHA = 0.85;
+
+// The small top buttons are easy to miss, so they are brighter
+const TOP_BUTTON_ALPHA = 0.75;
 
 export default class TouchControls {
   constructor(scene) {
@@ -50,6 +60,7 @@ export default class TouchControls {
     this.tap = null;
 
     this.parts = [];
+    this.fullscreenButton = null;
 
     if (!this.enabled) return;
 
@@ -62,6 +73,11 @@ export default class TouchControls {
     this.createButtons();
 
     scene.input.on("pointerdown", this.handleDown, this);
+    scene.input.on("pointerup", this.handleUp, this);
+
+    // Fullscreen on Android: lock to landscape once it starts
+    scene.scale.on("enterfullscreen", this.lockLandscape, this);
+    scene.scale.on("leavefullscreen", this.unlockOrientation, this);
 
     scene.events.once("shutdown", () => this.destroy());
 
@@ -133,6 +149,79 @@ export default class TouchControls {
       part.setDepth(DEPTH);
       part.setAlpha(IDLE_ALPHA);
     }
+
+    this.pauseButton.setAlpha(TOP_BUTTON_ALPHA);
+
+    // FULLSCREEN (four corner brackets). Only where the browser
+    // allows it (not on iPhone Safari).
+    if (scene.scale.fullscreen && scene.scale.fullscreen.available) {
+      const corners = scene.add.graphics();
+
+      corners.lineStyle(7, 0xffffff, 1);
+
+      for (const sx of [-1, 1]) {
+        for (const sy of [-1, 1]) {
+          corners.beginPath();
+          corners.moveTo(sx * 16, sy * 6);
+          corners.lineTo(sx * 16, sy * 16);
+          corners.lineTo(sx * 6, sy * 16);
+          corners.strokePath();
+        }
+      }
+
+      this.fullscreenButton = scene.add.container(
+        FULLSCREEN_BUTTON.x,
+        FULLSCREEN_BUTTON.y,
+        [makeCircle(FULLSCREEN_BUTTON), corners]
+      );
+
+      this.fullscreenButton.setDepth(FULLSCREEN_DEPTH);
+      this.fullscreenButton.setAlpha(TOP_BUTTON_ALPHA);
+    }
+  }
+
+  // =================================
+  // FULLSCREEN
+  // =================================
+
+  nearFullscreenButton(pointer) {
+    return (
+      Math.hypot(
+        pointer.x - FULLSCREEN_BUTTON.x,
+        pointer.y - FULLSCREEN_BUTTON.y
+      ) <= FULLSCREEN_BUTTON.hit
+    );
+  }
+
+  toggleFullscreen() {
+    const scale = this.scene.scale;
+
+    if (scale.isFullscreen) {
+      scale.stopFullscreen();
+    } else {
+      scale.startFullscreen();
+    }
+  }
+
+  // Keeps the phone sideways in fullscreen (where the browser allows)
+  lockLandscape() {
+    try {
+      if (window.screen.orientation && window.screen.orientation.lock) {
+        window.screen.orientation.lock("landscape").catch(() => {});
+      }
+    } catch (error) {
+      // Not supported: the "turn your phone" screen still covers it
+    }
+  }
+
+  unlockOrientation() {
+    try {
+      if (window.screen.orientation && window.screen.orientation.unlock) {
+        window.screen.orientation.unlock();
+      }
+    } catch (error) {
+      // Ignore
+    }
   }
 
   setVisible(visible) {
@@ -153,6 +242,11 @@ export default class TouchControls {
   // =================================
 
   handleDown(pointer) {
+    // The fullscreen button never counts as a tap, jump or pause
+    if (this.fullscreenButton && this.nearFullscreenButton(pointer)) {
+      return;
+    }
+
     this.tap = { x: pointer.x, y: pointer.y };
 
     const pauseDistance = Math.hypot(
@@ -167,6 +261,14 @@ export default class TouchControls {
 
     if (pointer.x >= JUMP_ZONE_X) {
       this.jumpQueued = true;
+    }
+  }
+
+  // Browsers only allow fullscreen from a finished touch, so the
+  // toggle happens on release
+  handleUp(pointer) {
+    if (this.fullscreenButton && this.nearFullscreenButton(pointer)) {
+      this.toggleFullscreen();
     }
   }
 
@@ -264,6 +366,12 @@ export default class TouchControls {
   destroy() {
     if (this.scene && this.scene.input) {
       this.scene.input.off("pointerdown", this.handleDown, this);
+      this.scene.input.off("pointerup", this.handleUp, this);
+    }
+
+    if (this.scene && this.scene.scale) {
+      this.scene.scale.off("enterfullscreen", this.lockLandscape, this);
+      this.scene.scale.off("leavefullscreen", this.unlockOrientation, this);
     }
 
     this.parts = [];
